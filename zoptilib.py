@@ -58,6 +58,11 @@ class Zopti:
 		self.supported_with_vmaf = ['time', 'ssim']				# these metrics can be read from the vmaf output	
 		self.output_file = output_file
 		self.vmaf_model = 0										# default model: vmaf_v0.6.1.pkl
+		self.params = {
+			"ssim": {},
+			"gmsd": {},
+			"mdsi": {},			
+		}
 	
 		# measure total runtime
 		self.start_time = time.perf_counter()
@@ -86,6 +91,15 @@ class Zopti:
 					
 	def setVMAFModel(self, model):
 		self.vmaf_model = model
+	
+	def addParams(self, metric, params):
+		if metric in self.valid_metrics:
+			if type(params) is dict:
+				self.params[metric].update(params)
+			else:
+				raise NameError('The parameters list should look like this: dict(myVar=True, myOtherVar=0.4)')
+		else:
+			raise NameError('Unknown metric "'+metric+'"')
 					
 	def run(self, clip, alt_clip):
 		
@@ -99,19 +113,20 @@ class Zopti:
 			data = []
 			prop_src = []
 			for metric in self.metrics:
+				filter_args = self.params[metric] if metric in self.params else {}
 				if metric == 'gmsd':
 					# calculate GMSD between original and alternate version
-					alt_clip = muv.GMSD(alt_clip, clip, show_map=False)
+					alt_clip = muv.GMSD(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('gmsd'))
 				elif metric == 'ssim':
 					# calculate SSIM between original and alternate version
-					alt_clip = muv.SSIM(alt_clip, clip, show_map=False)
+					alt_clip = muv.SSIM(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('ssim'))
 				elif metric == 'mdsi':
 					# calculate MDSI between original and alternate version
-					alt_clip = muv.MDSI(alt_clip, clip, down_scale=2)
+					alt_clip = muv.MDSI(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('mdsi'))
 				elif metric == 'butteraugli':
@@ -188,3 +203,4 @@ class Zopti:
 			final = core.vmaf.VMAF(clip, alt_clip, model=self.vmaf_model, log_path=self.output_file, log_fmt=0, ssim=calc_ssim, ms_ssim=False, pool=0, ci=False)		
 			final.set_output()
 			return final
+			
