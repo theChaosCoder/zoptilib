@@ -45,6 +45,7 @@
 #  2019-02-23	v1.0.4	(by Zorr)
 #						-changed RGB conversion implementation to use core.resize instead of fmtconv to avoid crashes 
 #						-new toRGB argument "tv_range" to specify whether clip has full or limited range, default is True
+#  2019-02-23	v1.0.5	fixed bugs introduced in the previous version (by Zorr)
 
 import vapoursynth as vs
 import time
@@ -118,7 +119,7 @@ class Zopti:
 				return clip
 			if matrix is None:
 				raise NameError("RGB conversion needed for "+metric+" - please specify the color matrix when initializing Zopti (for example matrix='601' or matrix='709')")
-			clip = self.toRGB(clip, matrix, linear=linear, bits_per_sample=8)
+			clip = self.toRGB(clip, matrix, linear=linear, bits_per_component=8)
 			return clip
 			
 		
@@ -231,7 +232,7 @@ class Zopti:
 			final.set_output()
 			return final
 			
-	def toRGB(clip, matrix, linear=False, bits_per_component=8, tv_range=True):		
+	def toRGB(self, clip, matrix, linear=False, bits_per_component=8, tv_range=True):		
 
 		if clip.format.color_family != vs.RGB:
 
