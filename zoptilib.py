@@ -4,14 +4,12 @@
 # -supported similarity metrics are 'ssim', 'gmsd' and 'vmaf' (note: currently cannot have both gmsd and vmaf at the same time)
 # -measures the runtime in milliseconds when 'time' is added to metrics list
 # 
-# Requirements: muvsfunc (for SSIM and GMSD), VapourSynth-VMAF (for VMAF)
+# Requirements: muvsfunc (for SSIM, GMSD and MDSI), VapourSynth-VMAF (for VMAF), VapourSynth-butteraugli (for Butteraugli)
 # 
 # Usage examples:
 #
 #   from zoptilib import Zopti
-#   output_file = r'results.txt' # output out1="SSIM: MAX(float)" out2="time: MIN(time) ms" file="results.txt"
-#   zopti = Zopti(output_file, metrics=['ssim', 'time'])	# initialize output file and chosen metrics 
-#															# make sure metrics match what is defined at the line above
+#   zopti = Zopti(r'results.txt', metrics=['ssim', 'time'])	# initialize output file and chosen metrics
 #															# Zopti starts measuring runtime at this point so call it just before the processing you want to measure
 #
 #   # define parameters to optimize (in the comments)
@@ -26,16 +24,27 @@
 #															# note: the first clip should be the reference / original clip
 #   														# the output video is the second clip when vmaf is not used and the first clip when vmaf is used
 #
-#         OR 
+#         OR (manually define output metrics, their goals (min/max), types (float, time) and units
 #
-#   zopti = Zopti(output_file)								# initialize output file
-#   zopti.addMetrics(['ssim','time'])						# add chosen metrics
+#   output_file = r'results.txt' # output out1="SSIM: MAX(float)" out2="time: MIN(time) ms" file="results.txt"
+#   zopti = Zopti(output_file, metrics=['ssim', 'time'])	# initialize output file and chosen metrics 
+#															# make sure metrics match what is defined at the line above
 #   ... process the video and measure similarity ...
 #
 #
 # Changelog:
-#  2019-01-23   v1.0   initial version
-#
+#  2019-01-23   v1.0   	initial version (by Zorr)
+#  2019-02-08   v1.0.1	added MDSI and Butteraugli similary metrics (by ChaosKing)
+#  2019-02-18   v1.0.2  added addMetric() -function to specify arguments for the similarity metric functions (by ChaosKing)
+#  2019-02-19   v1.0.3  (by Zorr)
+#						-added (semi)automatic YUV -> RGB conversion
+#						-new init parameter matrix to set the YUV color matrix when using metrics that need RGB 
+#						 (note: cannot currently use both YUV and RGB metrics at the same time)
+#						-added toRGB() function for manual RGB conversions
+#						-no downsampling by default in any of the metrics
+#  2019-02-23	v1.0.4	(by Zorr)
+#						-changed RGB conversion implementation to use core.resize instead of fmtconv to avoid crashes 
+#						-new toRGB argument "tv_range" to specify whether clip has full or limited range, default is True
 
 import vapoursynth as vs
 import time
@@ -52,17 +61,18 @@ class FrameData:
 	
 class Zopti:
 		
-	def __init__(self, output_file, metrics = None):
+	def __init__(self, output_file, metrics = None, matrix = None):
 
 		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf']
 		self.supported_with_vmaf = ['time', 'ssim']				# these metrics can be read from the vmaf output	
 		self.output_file = output_file
 		self.vmaf_model = 0										# default model: vmaf_v0.6.1.pkl
 		self.params = {
-			"ssim": {},
-			"gmsd": {},
-			"mdsi": {},			
+			"ssim": dict(downsample = False),
+			"gmsd": dict(downsample = False),
+			"mdsi": dict(down_scale = 1)
 		}
+		self.matrix = matrix
 	
 		# measure total runtime
 		self.start_time = time.perf_counter()
@@ -91,7 +101,7 @@ class Zopti:
 					
 	def setVMAFModel(self, model):
 		self.vmaf_model = model
-	
+					
 	def addParams(self, metric, params):
 		if metric in self.valid_metrics:
 			if type(params) is dict:
@@ -99,9 +109,18 @@ class Zopti:
 			else:
 				raise NameError('The parameters list should look like this: dict(myVar=True, myOtherVar=0.4)')
 		else:
-			raise NameError('Unknown metric "'+metric+'"')
-					
+			raise NameError('Unknown metric "'+metric+'"')	
+	
 	def run(self, clip, alt_clip):
+		
+		def convertToRGB(metric, clip, matrix, linear=False):
+			if clip.format.color_family == vs.RGB:
+				return clip
+			if matrix is None:
+				raise NameError("RGB conversion needed for "+metric+" - please specify the color matrix when initializing Zopti (for example matrix='601' or matrix='709')")
+			clip = self.toRGB(clip, matrix, linear=linear, bits_per_sample=8)
+			return clip
+			
 		
 		if len(self.metrics) == 0:
 			raise ValueError('No metrics defined')
@@ -125,11 +144,19 @@ class Zopti:
 					prop_src = [alt_clip]
 					data.append(FrameData('ssim'))
 				elif metric == 'mdsi':
+					# convert to RGB if needed
+					clip = convertToRGB('MDSI', clip, self.matrix, False)
+					alt_clip = convertToRGB('MDSI', alt_clip, self.matrix, False)
+				
 					# calculate MDSI between original and alternate version
 					alt_clip = muv.MDSI(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('mdsi'))
 				elif metric == 'butteraugli':
+					# convert to linear RGB if needed
+					clip = convertToRGB('Butteraugli', clip, self.matrix, True)
+					alt_clip = convertToRGB('Butteraugli', alt_clip, self.matrix, True)
+
 					# calculate butteraugli between original and alternate version
 					alt_clip = core.Butteraugli.butteraugli(alt_clip, clip)
 					prop_src = [alt_clip]
@@ -204,3 +231,33 @@ class Zopti:
 			final.set_output()
 			return final
 			
+	def toRGB(clip, matrix, linear=False, bits_per_component=8, tv_range=True):		
+
+		if clip.format.color_family != vs.RGB:
+
+			formats = {
+				24: vs.RGB24,
+				27: vs.RGB27,
+				30: vs.RGB30,
+				48: vs.RGB48
+			}
+			format = formats.get(3*bits_per_component)			
+			
+			# also accept matrix 601 (same as 470bg and 170m)
+			matrix = '470bg' if matrix == '601' else matrix
+			
+			# set input color range to full if needed
+			if not tv_range:
+				clip = clip.std.SetFrameProp(prop="_ColorRange", intval=0)
+			
+			# use dither for higher quality conversion
+			dither = 'error_diffusion'					
+			
+			if not linear:
+				clip = core.resize.Bicubic(clip, format=format, matrix_in_s=matrix, dither_type=dither)
+			else:			
+				transfer_in = '601' if (matrix == '470bg' or matrix == '170m') else '709'
+				clip = core.resize.Bicubic(clip, format=format, matrix_in_s=matrix, dither_type=dither, transfer_in_s=transfer_in, transfer_s='linear')
+		
+		return clip
+		
