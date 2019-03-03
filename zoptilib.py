@@ -46,6 +46,10 @@
 #						-changed RGB conversion implementation to use core.resize instead of fmtconv to avoid crashes 
 #						-new toRGB argument "tv_range" to specify whether clip has full or limited range, default is True
 #  2019-02-23	v1.0.5	fixed bugs introduced in the previous version (by Zorr)
+#  2019-03-03   v1.0.6 	(by Zorr)
+#						-new init parameter tv_range to set full or limited range for the clip
+#						-toRGB default value for tv_range is now None, uses what is currently defined in the clip
+#						-removed unnecessary linear RGB conversion with Butteraugli (Vapoursynth-Butteraugli does it internally)
 
 import vapoursynth as vs
 import time
@@ -62,7 +66,7 @@ class FrameData:
 	
 class Zopti:
 		
-	def __init__(self, output_file, metrics = None, matrix = None):
+	def __init__(self, output_file, metrics = None, matrix = None, tv_range = None):
 
 		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf']
 		self.supported_with_vmaf = ['time', 'ssim']				# these metrics can be read from the vmaf output	
@@ -74,6 +78,7 @@ class Zopti:
 			"mdsi": dict(down_scale = 1)
 		}
 		self.matrix = matrix
+		self.tv_range = tv_range
 	
 		# measure total runtime
 		self.start_time = time.perf_counter()
@@ -113,6 +118,15 @@ class Zopti:
 			raise NameError('Unknown metric "'+metric+'"')	
 	
 	def run(self, clip, alt_clip):
+		
+		# set input color range to full if needed
+		if self.tv_range is not None:
+			if not self.tv_range:
+				clip = clip.std.SetFrameProp(prop="_ColorRange", intval=0)
+				alt_clip = alt_clip.std.SetFrameProp(prop="_ColorRange", intval=0)
+			else:
+				clip = clip.std.SetFrameProp(prop="_ColorRange", intval=1)
+				alt_clip = alt_clip.std.SetFrameProp(prop="_ColorRange", intval=1)
 		
 		def convertToRGB(metric, clip, matrix, linear=False):
 			if clip.format.color_family == vs.RGB:
@@ -154,9 +168,9 @@ class Zopti:
 					prop_src = [alt_clip]
 					data.append(FrameData('mdsi'))
 				elif metric == 'butteraugli':
-					# convert to linear RGB if needed
-					clip = convertToRGB('Butteraugli', clip, self.matrix, True)
-					alt_clip = convertToRGB('Butteraugli', alt_clip, self.matrix, True)
+					# convert to RGB if needed (NOTE: Vapoursynth-Butteraugli converts from sRGB to linear RGB internally)
+					clip = convertToRGB('Butteraugli', clip, self.matrix, False)
+					alt_clip = convertToRGB('Butteraugli', alt_clip, self.matrix, False)
 
 					# calculate butteraugli between original and alternate version
 					alt_clip = core.Butteraugli.butteraugli(alt_clip, clip)
@@ -232,7 +246,7 @@ class Zopti:
 			final.set_output()
 			return final
 			
-	def toRGB(self, clip, matrix, linear=False, bits_per_component=8, tv_range=True):		
+	def toRGB(self, clip, matrix, linear=False, bits_per_component=8, tv_range=None):		
 
 		if clip.format.color_family != vs.RGB:
 
@@ -248,8 +262,11 @@ class Zopti:
 			matrix = '470bg' if matrix == '601' else matrix
 			
 			# set input color range to full if needed
-			if not tv_range:
-				clip = clip.std.SetFrameProp(prop="_ColorRange", intval=0)
+			if tv_range is not None:
+				if not tv_range:
+					clip = clip.std.SetFrameProp(prop="_ColorRange", intval=0)
+				else:
+					clip = clip.std.SetFrameProp(prop="_ColorRange", intval=1)
 			
 			# use dither for higher quality conversion
 			dither = 'error_diffusion'					
