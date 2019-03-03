@@ -50,11 +50,17 @@
 #						-new init parameter tv_range to set full or limited range for the clip
 #						-toRGB default value for tv_range is now None, uses what is currently defined in the clip
 #						-removed unnecessary linear RGB conversion with Butteraugli (Vapoursynth-Butteraugli does it internally)
+#  2019-03-03   v1.0.7 	(by ChaosKing)
+#						-added basic WaDIQaM support https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
 
 import vapoursynth as vs
 import time
 import muvsfunc as muv
 import functools
+try:
+    import vs_wadiqam
+except ImportError:
+    pass
 
 core = vs.core
 
@@ -68,14 +74,15 @@ class Zopti:
 		
 	def __init__(self, output_file, metrics = None, matrix = None, tv_range = None):
 
-		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf']
+		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf', 'wadiqam']
 		self.supported_with_vmaf = ['time', 'ssim']				# these metrics can be read from the vmaf output	
 		self.output_file = output_file
 		self.vmaf_model = 0										# default model: vmaf_v0.6.1.pkl
 		self.params = {
 			"ssim": dict(downsample = False),
 			"gmsd": dict(downsample = False),
-			"mdsi": dict(down_scale = 1)
+			"mdsi": dict(down_scale = 1),
+			"wadiqam": dict(use_cuda = False)
 		}
 		self.matrix = matrix
 		self.tv_range = tv_range
@@ -128,12 +135,12 @@ class Zopti:
 				clip = clip.std.SetFrameProp(prop="_ColorRange", intval=1)
 				alt_clip = alt_clip.std.SetFrameProp(prop="_ColorRange", intval=1)
 		
-		def convertToRGB(metric, clip, matrix, linear=False):
+		def convertToRGB(metric, clip, matrix, linear=False, bits_per_component=8):
 			if clip.format.color_family == vs.RGB:
 				return clip
 			if matrix is None:
 				raise NameError("RGB conversion needed for "+metric+" - please specify the color matrix when initializing Zopti (for example matrix='601' or matrix='709')")
-			clip = self.toRGB(clip, matrix, linear=linear, bits_per_component=8)
+			clip = self.toRGB(clip, matrix, linear=linear, bits_per_component=bits_per_component)
 			return clip
 			
 		
@@ -176,6 +183,15 @@ class Zopti:
 					alt_clip = core.Butteraugli.butteraugli(alt_clip, clip)
 					prop_src = [alt_clip]
 					data.append(FrameData('butteraugli'))
+				elif metric == 'wadiqam':
+					# convert to RGBS if needed
+					clip = convertToRGB('wadiqam', clip, self.matrix, bits_per_component=32)
+					alt_clip = convertToRGB('wadiqam', alt_clip, self.matrix, bits_per_component=32)
+
+					# calculate WaDIQaM between original and alternate version
+					alt_clip = vs_wadiqam.vs_wadiqam(alt_clip, clip, **filter_args)
+					prop_src = [alt_clip]
+					data.append(FrameData('wadiqam'))
 				elif metric == 'time':
 					data.append(FrameData('time'))
 				else:
@@ -191,6 +207,8 @@ class Zopti:
 					prop_name = 'FrameMDSI'
 				elif (frame_data.name == 'butteraugli'):
 					prop_name = '_Diff'
+				elif (frame_data.name == 'wadiqam'):
+					prop_name = 'Frame_WaDIQaM'
 				elif (frame_data.name == 'time'):
 					pass
 				else:
@@ -254,7 +272,8 @@ class Zopti:
 				24: vs.RGB24,
 				27: vs.RGB27,
 				30: vs.RGB30,
-				48: vs.RGB48
+				48: vs.RGB48,
+				96: vs.RGBS
 			}
 			format = formats.get(3*bits_per_component)			
 			
