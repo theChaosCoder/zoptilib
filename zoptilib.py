@@ -52,13 +52,22 @@
 #						-removed unnecessary linear RGB conversion with Butteraugli (Vapoursynth-Butteraugli does it internally)
 #  2019-03-03   v1.0.7 	(by ChaosKing)
 #						-added basic WaDIQaM support https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
+#  2019-03-14   v1.0.8 	(by ChaosKing)
+#						-updated WaDIQaM fr/nr support (partially tested) https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
+#						-added showstats parameter. It displays all used metrics via text.Text()
+#						-refactor save_per_frame_data()
 
 import vapoursynth as vs
 import time
 import muvsfunc as muv
 import functools
 try:
-    import vs_wadiqam
+    import vs_wadiqam_pytorch
+except ImportError:
+    pass
+
+try:
+    import vs_wadiqam_chainer
 except ImportError:
     pass
 
@@ -72,9 +81,9 @@ class FrameData:
 	
 class Zopti:
 		
-	def __init__(self, output_file, metrics = None, matrix = None, tv_range = None):
+	def __init__(self, output_file, metrics = None, matrix = None, tv_range = None, showstats = False):
 
-		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf', 'wadiqam']
+		self.valid_metrics = ['time', 'ssim', 'gmsd', 'mdsi', 'butteraugli', 'vmaf', 'wadiqam'] ###, 'wadiqam_fr', 'wadiqam_nr' <- not tested / incomplete therefore deactivated for now
 		self.supported_with_vmaf = ['time', 'ssim']				# these metrics can be read from the vmaf output	
 		self.output_file = output_file
 		self.vmaf_model = 0										# default model: vmaf_v0.6.1.pkl
@@ -93,7 +102,9 @@ class Zopti:
 		# used metrics 
 		self.metrics = []
 		if metrics:
-			self.addMetrics(metrics)				
+			self.addMetrics(metrics)
+		
+		self.showstats = showstats # vmaf and time are not supported
 		
 		
 	def addMetric(self, metric):
@@ -160,11 +171,13 @@ class Zopti:
 					alt_clip = muv.GMSD(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('gmsd'))
+					
 				elif metric == 'ssim':
 					# calculate SSIM between original and alternate version
 					alt_clip = muv.SSIM(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('ssim'))
+					
 				elif metric == 'mdsi':
 					# convert to RGB if needed
 					clip = convertToRGB('MDSI', clip, self.matrix, False)
@@ -174,6 +187,7 @@ class Zopti:
 					alt_clip = muv.MDSI(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
 					data.append(FrameData('mdsi'))
+					
 				elif metric == 'butteraugli':
 					# convert to RGB if needed (NOTE: Vapoursynth-Butteraugli converts from sRGB to linear RGB internally)
 					clip = convertToRGB('Butteraugli', clip, self.matrix, False)
@@ -183,40 +197,68 @@ class Zopti:
 					alt_clip = core.Butteraugli.butteraugli(alt_clip, clip)
 					prop_src = [alt_clip]
 					data.append(FrameData('butteraugli'))
-				elif metric == 'wadiqam':
+					
+				elif metric == 'wadiqam': # see https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
 					# convert to RGBS if needed
-					clip = convertToRGB('wadiqam', clip, self.matrix, bits_per_component=32)
-					alt_clip = convertToRGB('wadiqam', alt_clip, self.matrix, bits_per_component=32)
+					clip = convertToRGB(metric, clip, self.matrix, bits_per_component=32)
+					alt_clip = convertToRGB(metric, alt_clip, self.matrix, bits_per_component=32)
 
-					# calculate WaDIQaM between original and alternate version
-					alt_clip = vs_wadiqam.vs_wadiqam(alt_clip, clip, **filter_args)
+					# calculate WaDIQaM (pytorch implementation) between original and alternate version
+					alt_clip = vs_wadiqam_pytorch.wadiqam_fr(alt_clip, clip, **filter_args)
 					prop_src = [alt_clip]
-					data.append(FrameData('wadiqam'))
+					data.append(FrameData(metric))
+					
+				elif metric == 'wadiqam_fr': # see https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
+					# convert to RGBS if needed
+					clip = convertToRGB(metric, clip, self.matrix)
+					alt_clip = convertToRGB(metric, alt_clip, self.matrix)
+
+					# calculate Full-reference WaDIQaM (chainer implementation) between original and alternate version
+					alt_clip = vs_wadiqam_chainer.wadiqam_fr(alt_clip, clip, **filter_args)
+					prop_src = [alt_clip]
+					data.append(FrameData(metric))
+					
+				elif metric == 'wadiqam_nr': # see https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
+					# convert to RGBS if needed
+					clip = convertToRGB(metric, clip, self.matrix)
+					alt_clip = convertToRGB(metric, alt_clip, self.matrix)
+
+					# calculate No-reference WaDIQaM (chainer implementation) between original and alternate version
+					alt_clip = vs_wadiqam_chainer.wadiqam_fr(alt_clip, clip, **filter_args)
+					prop_src = [alt_clip]
+					data.append(FrameData(metric))
+					
 				elif metric == 'time':
 					data.append(FrameData('time'))
 				else:
 					raise NameError('Unknown metric '+metric)
 			
 			def save_per_frame_data(n, frame_data, f):
-				prop_name = ''
-				if (frame_data.name == 'gmsd'):
-					prop_name = 'PlaneGMSD'
-				elif (frame_data.name == 'ssim'):
-					prop_name = 'PlaneSSIM'
-				elif (frame_data.name == 'mdsi'):
-					prop_name = 'FrameMDSI'
-				elif (frame_data.name == 'butteraugli'):
-					prop_name = '_Diff'
-				elif (frame_data.name == 'wadiqam'):
-					prop_name = 'Frame_WaDIQaM'
-				elif (frame_data.name == 'time'):
-					pass
-				else:
+				props = {	'gmsd': 		'PlaneGMSD', 
+							'ssim': 		'PlaneSSIM',
+							'mdsi': 		'FrameMDSI',
+							'butteraugli': 	'_Diff',
+							'wadiqam': 		'Frame_WaDIQaM',
+							'wadiqam_fr': 	'Frame_WaDIQaM_FR',
+							'wadiqam_nr': 	'Frame_WaDIQaM_NR',
+							'time':			''
+						}
+				try:
+					prop_name = props.get(frame_data.name, '') # default = ''
+				except KeyError:
 					raise NameError('Unknown per frame type '+frame_data.name)
 
 				if prop_name != '':
 					frame_data.per_frame_data[n] = f.props[prop_name]
-				
+			
+			
+			def show(clip, n, data):
+				text_metric = ""
+				for metric in self.metrics:
+					if not metric == 'time':
+						text_metric += str(metric) +": " + str(data[self.metrics.index(metric)].per_frame_data[n]) + "\n"
+
+				return clip.text.Text(text_metric)
 			
 			# write per frame GMSD and/or SSIM and total runtime to a file
 			def calc(n, f, clip, data):
@@ -245,8 +287,10 @@ class Zopti:
 							if frame_data.name == 'time':
 								file.write(str(runtime*1000)+' ')
 							else:
-								file.write(str(sum(frame_data.per_frame_data.values()))+' ')					
+								file.write(str(sum(frame_data.per_frame_data.values()))+' ')
 				
+				if self.showstats:
+					return show(clip, n, data)
 				return clip
 
 			final = alt_clip.std.FrameEval(functools.partial(calc, clip=alt_clip, data=data), prop_src=prop_src)
