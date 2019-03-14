@@ -256,7 +256,7 @@ class Zopti:
 				text_metric = ""
 				for metric in self.metrics:
 					if not metric == 'time':
-						text_metric += str(metric) +": " + str(data[self.metrics.index(metric)].per_frame_data[n]) + "\n"
+						text_metric += str(metric)[:4] +": " + str(data[self.metrics.index(metric)].per_frame_data[n]) + "\n"
 
 				return clip.text.Text(text_metric)
 			
