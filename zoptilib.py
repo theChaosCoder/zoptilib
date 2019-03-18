@@ -270,8 +270,8 @@ class Zopti:
 				if (len(data[0].per_frame_data) == total_frames):
 					runtime = time.perf_counter() - self.start_time
 					with open(self.output_file, 'w') as file:
+						frame_nbr = 0
 						for frame in data[0].per_frame_data.items():
-							frame_nbr = frame[0]
 							file.write(str(frame_nbr) + '; ')
 							for frame_data in data:
 								if frame_data.name == 'time':
@@ -280,6 +280,7 @@ class Zopti:
 									info = frame_data.per_frame_data[frame_nbr]
 									file.write(str(info)+'; ')	
 							file.write('\n')
+							frame_nbr += 1
 							
 						# write sum of per frame values and/or total runtime to last line
 						file.write('stop ')
