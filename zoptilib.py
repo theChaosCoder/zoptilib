@@ -61,6 +61,7 @@ import vapoursynth as vs
 import time
 import muvsfunc as muv
 import functools
+from decimal import Decimal
 try:
     import vs_wadiqam_pytorch
 except ImportError:
@@ -249,7 +250,7 @@ class Zopti:
 					raise NameError('Unknown per frame type '+frame_data.name)
 
 				if prop_name != '':
-					frame_data.per_frame_data[n] = f.props[prop_name]
+					frame_data.per_frame_data[n] = Decimal(f.props[prop_name])
 			
 			
 			def show(clip, n, data):
