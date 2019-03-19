@@ -56,6 +56,10 @@
 #						-updated WaDIQaM fr/nr support (partially tested) https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
 #						-added showstats parameter. It displays all used metrics via text.Text()
 #						-refactor save_per_frame_data()
+#  2019-03-19   v1.0.9 	(by ChaosKing)
+#						-Save metrics with higher precision via Decimal() [in testing]
+#						-Add copy_props() to ensure the test clip stays clean. metrics = ('mdsi', 'ssim') doesn't affect ssim now.
+
 
 import vapoursynth as vs
 import time
@@ -154,6 +158,11 @@ class Zopti:
 				raise NameError("RGB conversion needed for "+metric+" - please specify the color matrix when initializing Zopti (for example matrix='601' or matrix='709')")
 			clip = self.toRGB(clip, matrix, linear=linear, bits_per_component=bits_per_component)
 			return clip
+		
+		def copy_prop(n, f, prop_name):
+			fout = f[0].copy()
+			fout.props[prop_name] = f[1].props[prop_name]
+			return fout
 			
 		
 		if len(self.metrics) == 0:
@@ -181,31 +190,34 @@ class Zopti:
 					
 				elif metric == 'mdsi':
 					# convert to RGB if needed
-					clip = convertToRGB('MDSI', clip, self.matrix, False)
-					alt_clip = convertToRGB('MDSI', alt_clip, self.matrix, False)
+					clip_rgb = convertToRGB('MDSI', clip, self.matrix, False)
+					alt_clip_rgb = convertToRGB('MDSI', alt_clip, self.matrix, False)
 				
 					# calculate MDSI between original and alternate version
-					alt_clip = muv.MDSI(alt_clip, clip, **filter_args)
+					alt_clip_mdsi = muv.MDSI(alt_clip_rgb, clip_rgb, **filter_args)
+					alt_clip = core.std.ModifyFrame(alt_clip, [alt_clip, alt_clip_mdsi], selector=functools.partial(copy_prop, prop_name="FrameMDSI")) # copy props to alt_clip to avoid "contaminating" our clip with convertToRGB
 					prop_src = [alt_clip]
 					data.append(FrameData('mdsi'))
 					
 				elif metric == 'butteraugli':
 					# convert to RGB if needed (NOTE: Vapoursynth-Butteraugli converts from sRGB to linear RGB internally)
-					clip = convertToRGB('Butteraugli', clip, self.matrix, False)
-					alt_clip = convertToRGB('Butteraugli', alt_clip, self.matrix, False)
+					clip_rgb = convertToRGB('Butteraugli', clip, self.matrix, False)
+					alt_clip_rgb = convertToRGB('Butteraugli', alt_clip, self.matrix, False)
 
 					# calculate butteraugli between original and alternate version
-					alt_clip = core.Butteraugli.butteraugli(alt_clip, clip)
+					alt_clip_butt = core.Butteraugli.butteraugli(alt_clip_rgb, clip_rgb)
+					alt_clip = core.std.ModifyFrame(alt_clip, [alt_clip, alt_clip_butt], selector=functools.partial(copy_prop, prop_name="_Diff")) # copy props to alt_clip to avoid contaminating our clip with butterauglis mask
 					prop_src = [alt_clip]
 					data.append(FrameData('butteraugli'))
 					
 				elif metric == 'wadiqam': # see https://gist.github.com/WolframRhodium/d4b117ccc98081e40a70946b884dbe36
 					# convert to RGBS if needed
-					clip = convertToRGB(metric, clip, self.matrix, bits_per_component=32)
-					alt_clip = convertToRGB(metric, alt_clip, self.matrix, bits_per_component=32)
+					clip_rgb = convertToRGB(metric, clip, self.matrix, bits_per_component=32)
+					alt_clip_rgb = convertToRGB(metric, alt_clip, self.matrix, bits_per_component=32)
 
 					# calculate WaDIQaM (pytorch implementation) between original and alternate version
-					alt_clip = vs_wadiqam_pytorch.wadiqam_fr(alt_clip, clip, **filter_args)
+					alt_clip_wadiqam_pytorch = vs_wadiqam_pytorch.wadiqam_fr(alt_clip_rgb, clip_rgb, **filter_args)
+					alt_clip = core.std.ModifyFrame(alt_clip, [alt_clip, alt_clip_wadiqam_pytorch], selector=functools.partial(copy_prop, prop_name="Frame_WaDIQaM")) # copy props to alt_clip to avoid "contaminating" our clip with convertToRGB
 					prop_src = [alt_clip]
 					data.append(FrameData(metric))
 					
