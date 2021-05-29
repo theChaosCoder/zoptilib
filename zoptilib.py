@@ -59,13 +59,15 @@
 #  2019-03-19   v1.0.9 	(by ChaosKing)
 #						-Save metrics with higher precision via Decimal() [in testing]
 #						-Add copy_props() to ensure the test clip stays clean. metrics = ('mdsi', 'ssim') doesn't affect ssim now.
+#  2021-04-15   v1.0.9m	(mod by Zorr)
+#						-Decimal no longer used in saving metrics
 
 
 import vapoursynth as vs
 import time
 import muvsfunc as muv
 import functools
-from decimal import Decimal
+
 try:
     import vs_wadiqam_pytorch
 except ImportError:
@@ -262,7 +264,7 @@ class Zopti:
 					raise NameError('Unknown per frame type '+frame_data.name)
 
 				if prop_name != '':
-					frame_data.per_frame_data[n] = Decimal(f.props[prop_name])
+					frame_data.per_frame_data[n] = f.props[prop_name]
 			
 			
 			def show(clip, n, data):
